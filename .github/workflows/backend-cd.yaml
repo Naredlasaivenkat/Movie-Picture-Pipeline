@@ -171,63 +171,158 @@ jobs:
         run: |
           kustomize build | kubectl apply -f -
 
+
       # =========================
-      # DEPLOYMENT CHECK
+      # WAIT FOR ROLLOUT
       # =========================
-      - name: Check backend deployment
+      - name: Wait for backend rollout
         run: |
-          echo "===== DEPLOYMENT ====="
-          kubectl get deployment backend -o wide
+          echo "===== WAITING FOR BACKEND ====="
+
+          kubectl rollout status deployment/backend --timeout=180s
+
+
+      # =========================
+      # BACKEND DIAGNOSTICS
+      # =========================
+      - name: Backend diagnostics
+        if: always()
+        run: |
+
+          echo "=============================================="
+          echo "BACKEND DEPLOYMENT"
+          echo "=============================================="
+
+          kubectl get deployment backend -o wide || true
+
 
           echo ""
-          echo "===== PODS ====="
-          kubectl get pods -l app=backend -o wide
+          echo "=============================================="
+          echo "BACKEND PODS"
+          echo "=============================================="
+
+          kubectl get pods \
+            -l app=backend \
+            -o wide || true
+
 
           echo ""
-          echo "===== SERVICE ====="
-          kubectl get service backend -o wide
+          echo "=============================================="
+          echo "BACKEND POD STATUS"
+          echo "=============================================="
 
-      # =========================
-      # ROLLOUT
-      # =========================
-      - name: Check backend rollout
-        run: |
-          echo "===== ROLLOUT STATUS ====="
+          kubectl get pods \
+            -l app=backend \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" : "}{.status.phase}{"\n"}{end}' || true
 
-          if ! kubectl rollout status deployment/backend --timeout=180s; then
+
+          echo ""
+          echo "=============================================="
+          echo "BACKEND LOGS"
+          echo "=============================================="
+
+          POD=$(kubectl get pods \
+            -l app=backend \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+          if [ -n "$POD" ]; then
+            echo "Pod: $POD"
+            echo ""
+            kubectl logs "$POD" \
+              --all-containers=true \
+              --tail=200 || true
 
             echo ""
-            echo "===== DEPLOYMENT FAILED ====="
-            kubectl get deployment backend -o yaml
+            echo "===== PREVIOUS CONTAINER LOGS ====="
 
-            echo ""
-            echo "===== PODS ====="
-            kubectl get pods -l app=backend -o wide
-
-            echo ""
-            echo "===== POD DESCRIPTIONS ====="
-            kubectl describe pods -l app=backend
-
-            echo ""
-            echo "===== RECENT EVENTS ====="
-            kubectl get events \
-              --sort-by=.lastTimestamp \
-              | tail -50
-
-            exit 1
+            kubectl logs "$POD" \
+              --all-containers=true \
+              --previous \
+              --tail=100 || true
+          else
+            echo "No backend pod found."
           fi
 
-      # =========================
-      # BACKEND SERVICE
-      # =========================
-      - name: Show backend service
-        run: |
+
           echo ""
           echo "=============================================="
           echo "BACKEND SERVICE"
           echo "=============================================="
 
-          kubectl get service backend -o wide
+          kubectl get service backend -o wide || true
+
 
           echo ""
           echo "=============================================="
+          echo "BACKEND ENDPOINTS"
+          echo "=============================================="
+
+          kubectl get endpoints backend -o wide || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "BACKEND ENDPOINT SLICES"
+          echo "=============================================="
+
+          kubectl get endpointslice \
+            -l kubernetes.io/service-name=backend \
+            -o wide || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "BACKEND EVENTS"
+          echo "=============================================="
+
+          kubectl get events \
+            --sort-by=.lastTimestamp \
+            | tail -50 || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "BACKEND DEPLOYMENT DESCRIPTION"
+          echo "=============================================="
+
+          kubectl describe deployment backend || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "BACKEND POD DESCRIPTION"
+          echo "=============================================="
+
+          if [ -n "$POD" ]; then
+            kubectl describe pod "$POD" || true
+          fi
+
+
+      # =========================
+      # SHOW BACKEND URL
+      # =========================
+      - name: Show backend service
+        if: always()
+        run: |
+
+          echo ""
+          echo "=============================================="
+          echo "BACKEND SERVICE"
+          echo "=============================================="
+
+          kubectl get service backend -o wide || true
+
+          echo ""
+          echo "=============================================="
+          echo "BACKEND LOAD BALANCER"
+          echo "=============================================="
+
+          ADDRESS=$(kubectl get service backend \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+
+          if [ -n "$ADDRESS" ]; then
+            echo "Backend URL:"
+            echo "http://$ADDRESS/movies/"
+          else
+            echo "LoadBalancer hostname not available yet."
+          fi
