@@ -12,6 +12,7 @@ COPY Pipfile* /app/
 RUN pip install --no-cache-dir \
     flask==2.2.3 \
     flask-cors==3.0.10 \
+    werkzeug==2.0.3 \
     uwsgi==2.0.21
 
 COPY . /app
