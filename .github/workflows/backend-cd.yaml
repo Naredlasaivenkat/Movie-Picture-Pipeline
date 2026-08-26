@@ -99,9 +99,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
       - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          aws ecr get-login-password \
+            --region "${{ secrets.AWS_REGION }}" \
+            | docker login \
+            --username AWS \
+            --password-stdin "${{ secrets.BACKEND_ECR_REPO }}"
 
       - name: Tag image
         run: |
@@ -164,7 +172,7 @@ jobs:
           kustomize build | kubectl apply -f -
 
       # =========================
-      # DIAGNOSTICS
+      # DEPLOYMENT CHECK
       # =========================
       - name: Check backend deployment
         run: |
@@ -174,10 +182,6 @@ jobs:
           echo ""
           echo "===== PODS ====="
           kubectl get pods -l app=backend -o wide
-
-          echo ""
-          echo "===== REPLICASETS ====="
-          kubectl get replicasets -l app=backend -o wide
 
           echo ""
           echo "===== SERVICE ====="
@@ -191,11 +195,9 @@ jobs:
           echo "===== ROLLOUT STATUS ====="
 
           if ! kubectl rollout status deployment/backend --timeout=180s; then
-            echo ""
-            echo "===== ROLLOUT FAILED ====="
 
             echo ""
-            echo "===== DEPLOYMENT ====="
+            echo "===== DEPLOYMENT FAILED ====="
             kubectl get deployment backend -o yaml
 
             echo ""
@@ -216,17 +218,16 @@ jobs:
           fi
 
       # =========================
-      # FINAL STATUS
+      # BACKEND SERVICE
       # =========================
-      - name: Backend deployment successful
+      - name: Show backend service
         run: |
           echo ""
           echo "=============================================="
-          echo "BACKEND DEPLOYMENT SUCCESSFUL"
+          echo "BACKEND SERVICE"
           echo "=============================================="
 
-          kubectl get deployment backend
-          kubectl get pods -l app=backend
-          kubectl get service backend
+          kubectl get service backend -o wide
 
+          echo ""
           echo "=============================================="
