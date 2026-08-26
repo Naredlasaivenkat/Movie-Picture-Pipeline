@@ -120,4 +120,3 @@ class Movies(MethodView):
                 **deleted,
             }
         }), 200
-    
