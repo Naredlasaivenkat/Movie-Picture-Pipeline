@@ -92,13 +92,10 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Tag image
-        run: |
-          docker tag mp-frontend:${{ github.sha }} \
-            ${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
+        run: docker tag mp-frontend:${{ github.sha }} ${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Push image to ECR
-        run: |
-          docker push ${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
+        run: docker push ${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
   deploy:
     name: Deploy
@@ -114,6 +111,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Configure kubectl
@@ -128,8 +126,7 @@ jobs:
       - name: Set frontend image
         working-directory: starter/frontend/k8s
         run: |
-          kustomize edit set image \
-            frontend=${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
+          kustomize edit set image frontend=${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Deploy frontend
         working-directory: starter/frontend/k8s
