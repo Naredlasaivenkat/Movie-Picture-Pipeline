@@ -1,35 +1,46 @@
-import os
-
 from flask import Flask, jsonify
 from flask_cors import CORS
-
-from .movies import movies_api
 
 app = Flask(__name__)
 CORS(app)
 
-app.register_blueprint(movies_api)
+MOVIES = [
+    {
+        "id": "123",
+        "title": "Top Gun: Maverick",
+        "description": "Fighter planes",
+    },
+    {
+        "id": "456",
+        "title": "Sonic the Hedgehog",
+        "description": "Blue Sega character",
+    },
+    {
+        "id": "789",
+        "title": "A Quiet Place",
+        "description": "Scary monsters",
+    },
+]
 
 
-@app.errorhandler(Exception)
-def handle_error(error):
-    print("BACKEND ERROR:", repr(error), flush=True)
-
-    return jsonify({
-        "error": str(error),
-        "type": type(error).__name__,
-    }), 500
+@app.route("/")
+def home():
+    return jsonify({"status": "Backend is running"})
 
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "ok"})
+
+
+@app.route("/movies")
+def get_movies():
+    return jsonify({"movies": MOVIES})
 
 
 if __name__ == "__main__":
     app.run(
         debug=False,
         host="0.0.0.0",
-        port=int(os.getenv("FLASK_RUN_PORT", 5000)),
+        port=5000,
     )
-    
