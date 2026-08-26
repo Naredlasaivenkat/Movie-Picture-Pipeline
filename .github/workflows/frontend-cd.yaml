@@ -99,7 +99,6 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -136,7 +135,6 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Configure kubectl
@@ -182,19 +180,31 @@ jobs:
       - name: Check frontend rollout
         run: |
           echo "===== ROLLOUT STATUS ====="
-          kubectl rollout status deployment/frontend --timeout=60s || true
 
-          echo ""
-          echo "===== DEPLOYMENT DESCRIPTION ====="
-          kubectl describe deployment frontend
+          if ! kubectl rollout status deployment/frontend --timeout=180s; then
+            echo ""
+            echo "===== ROLLOUT FAILED ====="
 
-          echo ""
-          echo "===== POD DESCRIPTION ====="
-          kubectl describe pods -l app=frontend
+            echo ""
+            echo "===== DEPLOYMENT ====="
+            kubectl get deployment frontend -o yaml
 
-          echo ""
-          echo "===== RECENT EVENTS ====="
-          kubectl get events --sort-by=.lastTimestamp | tail -30
+            echo ""
+            echo "===== PODS ====="
+            kubectl get pods -l app=frontend -o wide
+
+            echo ""
+            echo "===== POD DESCRIPTIONS ====="
+            kubectl describe pods -l app=frontend
+
+            echo ""
+            echo "===== RECENT EVENTS ====="
+            kubectl get events \
+              --sort-by=.lastTimestamp \
+              | tail -50
+
+            exit 1
+          fi
 
       # =========================
       # LOAD BALANCER
@@ -202,6 +212,8 @@ jobs:
       - name: Wait for frontend LoadBalancer
         run: |
           echo "Waiting for AWS LoadBalancer..."
+
+          ADDRESS=""
 
           for i in {1..30}; do
             ADDRESS=$(kubectl get service frontend \
@@ -218,10 +230,27 @@ jobs:
 
           if [ -z "$ADDRESS" ]; then
             echo "LoadBalancer hostname was not assigned."
+
+            echo ""
+            echo "===== SERVICE ====="
+            kubectl get service frontend -o wide
+
+            echo ""
+            echo "===== SERVICE DESCRIPTION ====="
             kubectl describe service frontend
+
+            echo ""
+            echo "===== EVENTS ====="
+            kubectl get events \
+              --sort-by=.lastTimestamp \
+              | tail -50
+
             exit 1
           fi
 
+      # =========================
+      # SHOW FRONTEND URL
+      # =========================
       - name: Show frontend URL
         run: |
           ADDRESS=$(kubectl get service frontend \
