@@ -132,3 +132,10 @@ jobs:
         working-directory: starter/frontend/k8s
         run: |
           kustomize build | kubectl apply -f -
+
+
+      - name: Show frontend service
+        run: |
+          kubectl get service frontend -o wide
+          kubectl get service frontend -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+          echo ""
