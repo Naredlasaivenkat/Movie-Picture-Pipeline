@@ -1,19 +1,19 @@
-from flask import Blueprint, jsonify, request
+from flask import jsonify, request
 from flask.views import MethodView
 
-# Dummy database
+
 movies = {
     "123": {
         "title": "Top Gun: Maverick",
-        "description": "Fighter planes"
+        "description": "Fighter planes",
     },
     "456": {
         "title": "Sonic the Hedgehog",
-        "description": "Blue Sega character"
+        "description": "Blue Sega character",
     },
     "789": {
         "title": "A Quiet Place",
-        "description": "Scary monsters"
+        "description": "Scary monsters",
     },
 }
 
@@ -21,20 +21,18 @@ movies = {
 class Movies(MethodView):
 
     def get(self, movie_id=None):
-        # GET /movies
         if movie_id is None:
             return jsonify({
                 "movies": [
                     {
                         "id": movie_id,
                         "title": movie["title"],
-                        "description": movie["description"]
+                        "description": movie["description"],
                     }
                     for movie_id, movie in movies.items()
                 ]
             }), 200
 
-        # GET /movies/<id>
         movie = movies.get(str(movie_id))
 
         if movie is None:
@@ -45,7 +43,7 @@ class Movies(MethodView):
         return jsonify({
             "movie": {
                 "id": str(movie_id),
-                **movie
+                **movie,
             }
         }), 200
 
@@ -66,14 +64,14 @@ class Movies(MethodView):
 
         movies[movie_id] = {
             "title": data.get("title", ""),
-            "description": data.get("description", "")
+            "description": data.get("description", ""),
         }
 
         return jsonify({
             "message": "Movie created",
             "movie": {
                 "id": movie_id,
-                **movies[movie_id]
+                **movies[movie_id],
             }
         }), 201
 
@@ -95,13 +93,13 @@ class Movies(MethodView):
         movie["title"] = data.get("title", movie["title"])
         movie["description"] = data.get(
             "description",
-            movie["description"]
+            movie["description"],
         )
 
         return jsonify({
             "movie": {
                 "id": str(movie_id),
-                **movie
+                **movie,
             }
         }), 200
 
@@ -119,6 +117,7 @@ class Movies(MethodView):
             "message": "Movie deleted",
             "movie": {
                 "id": movie_id,
-                **deleted
+                **deleted,
             }
         }), 200
+    
