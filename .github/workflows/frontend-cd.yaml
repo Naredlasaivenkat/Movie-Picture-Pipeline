@@ -13,9 +13,14 @@ env:
   REACT_APP_MOVIE_API_URL: ${{ secrets.REACT_APP_MOVIE_API_URL }}
 
 jobs:
+
+  # =========================
+  # LINT
+  # =========================
   lint:
     name: Lint
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: starter/frontend
@@ -37,9 +42,14 @@ jobs:
       - name: Run lint
         run: npm run lint
 
+
+  # =========================
+  # TEST
+  # =========================
   test:
     name: Test
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: starter/frontend
@@ -61,9 +71,14 @@ jobs:
       - name: Run tests
         run: CI=true npm test -- --watchAll=false
 
+
+  # =========================
+  # BUILD + PUSH TO ECR
+  # =========================
   build:
     name: Build
     runs-on: ubuntu-latest
+
     needs:
       - lint
       - test
@@ -92,14 +107,24 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Tag image
-        run: docker tag mp-frontend:${{ github.sha }} ${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
+        run: |
+          docker tag \
+            mp-frontend:${{ github.sha }} \
+            ${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Push image to ECR
-        run: docker push ${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
+        run: |
+          docker push \
+            ${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
+
+  # =========================
+  # DEPLOY TO EKS
+  # =========================
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
+
     needs: build
 
     steps:
@@ -126,16 +151,66 @@ jobs:
       - name: Set frontend image
         working-directory: starter/frontend/k8s
         run: |
-          kustomize edit set image frontend=${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
+          kustomize edit set image \
+            frontend=${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Deploy frontend
         working-directory: starter/frontend/k8s
         run: |
           kustomize build | kubectl apply -f -
 
-
-      - name: Show frontend service
+      # =========================
+      # VERIFY DEPLOYMENT
+      # =========================
+      - name: Verify frontend deployment
         run: |
-          kubectl get service frontend -o wide
-          kubectl get service frontend -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+          kubectl rollout status deployment/frontend --timeout=180s
+
+      - name: Show frontend resources
+        run: |
+          echo "=== Frontend Pods ==="
+          kubectl get pods -l app=frontend -o wide
+
           echo ""
+          echo "=== Frontend Deployment ==="
+          kubectl get deployment frontend
+
+          echo ""
+          echo "=== Frontend Service ==="
+          kubectl get service frontend -o wide
+
+      # =========================
+      # GET PUBLIC LOAD BALANCER
+      # =========================
+      - name: Wait for frontend LoadBalancer
+        run: |
+          echo "Waiting for AWS LoadBalancer..."
+
+          for i in {1..30}; do
+            ADDRESS=$(kubectl get service frontend \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+            if [ -n "$ADDRESS" ]; then
+              echo "LoadBalancer hostname: $ADDRESS"
+              break
+            fi
+
+            echo "LoadBalancer is still pending... attempt $i/30"
+            sleep 10
+          done
+
+          if [ -z "$ADDRESS" ]; then
+            echo "ERROR: LoadBalancer hostname was not assigned."
+            kubectl describe service frontend
+            exit 1
+          fi
+
+      - name: Show frontend URL
+        run: |
+          ADDRESS=$(kubectl get service frontend \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          echo "======================================"
+          echo "Frontend application URL:"
+          echo "http://$ADDRESS"
+          echo "======================================"
