@@ -3,41 +3,17 @@ import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 
+from .movies import movies_api
+
 app = Flask(__name__)
 CORS(app)
 
-MOVIES = [
-    {
-        "id": "123",
-        "title": "Top Gun: Maverick",
-        "description": "Fighter planes",
-    },
-    {
-        "id": "456",
-        "title": "Sonic the Hedgehog",
-        "description": "Blue Sega character",
-    },
-    {
-        "id": "789",
-        "title": "A Quiet Place",
-        "description": "Scary monsters",
-    },
-]
+app.register_blueprint(movies_api)
 
 
 @app.route("/")
-def home():
-    return jsonify({"status": "Backend is running"})
-
-
-@app.route("/health")
 def health():
-    return jsonify({"status": "ok"})
-
-
-@app.route("/movies/", strict_slashes=False)
-def get_movies():
-    return jsonify({"movies": MOVIES})
+    return jsonify({"status": "Backend is running"})
 
 
 if __name__ == "__main__":
