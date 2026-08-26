@@ -160,27 +160,44 @@ jobs:
           kustomize build | kubectl apply -f -
 
       # =========================
-      # VERIFY DEPLOYMENT
+      # DIAGNOSTICS
       # =========================
-      - name: Verify frontend deployment
+      - name: Check frontend deployment
         run: |
-          kubectl rollout status deployment/frontend --timeout=180s
+          echo "===== DEPLOYMENT ====="
+          kubectl get deployment frontend -o wide
 
-      - name: Show frontend resources
-        run: |
-          echo "=== Frontend Pods ==="
+          echo ""
+          echo "===== PODS ====="
           kubectl get pods -l app=frontend -o wide
 
           echo ""
-          echo "=== Frontend Deployment ==="
-          kubectl get deployment frontend
+          echo "===== REPLICASETS ====="
+          kubectl get replicasets -l app=frontend -o wide
 
           echo ""
-          echo "=== Frontend Service ==="
+          echo "===== SERVICE ====="
           kubectl get service frontend -o wide
 
+      - name: Check frontend rollout
+        run: |
+          echo "===== ROLLOUT STATUS ====="
+          kubectl rollout status deployment/frontend --timeout=60s || true
+
+          echo ""
+          echo "===== DEPLOYMENT DESCRIPTION ====="
+          kubectl describe deployment frontend
+
+          echo ""
+          echo "===== POD DESCRIPTION ====="
+          kubectl describe pods -l app=frontend
+
+          echo ""
+          echo "===== RECENT EVENTS ====="
+          kubectl get events --sort-by=.lastTimestamp | tail -30
+
       # =========================
-      # GET PUBLIC LOAD BALANCER
+      # LOAD BALANCER
       # =========================
       - name: Wait for frontend LoadBalancer
         run: |
@@ -195,12 +212,12 @@ jobs:
               break
             fi
 
-            echo "LoadBalancer is still pending... attempt $i/30"
+            echo "LoadBalancer still pending... attempt $i/30"
             sleep 10
           done
 
           if [ -z "$ADDRESS" ]; then
-            echo "ERROR: LoadBalancer hostname was not assigned."
+            echo "LoadBalancer hostname was not assigned."
             kubectl describe service frontend
             exit 1
           fi
@@ -210,7 +227,9 @@ jobs:
           ADDRESS=$(kubectl get service frontend \
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
-          echo "======================================"
-          echo "Frontend application URL:"
+          echo ""
+          echo "=============================================="
+          echo "FRONTEND APPLICATION"
+          echo "=============================================="
           echo "http://$ADDRESS"
-          echo "======================================"
+          echo "=============================================="
