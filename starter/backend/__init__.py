@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, jsonify
 from flask_cors import CORS
 
@@ -33,7 +35,7 @@ def health():
     return jsonify({"status": "ok"})
 
 
-@app.route("/movies")
+@app.route("/movies/", strict_slashes=False)
 def get_movies():
     return jsonify({"movies": MOVIES})
 
@@ -42,5 +44,5 @@ if __name__ == "__main__":
     app.run(
         debug=False,
         host="0.0.0.0",
-        port=5000,
+        port=int(os.getenv("FLASK_RUN_PORT", 5000)),
     )
