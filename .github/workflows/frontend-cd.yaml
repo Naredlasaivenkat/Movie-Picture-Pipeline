@@ -30,15 +30,11 @@
       - name: Setup Kustomize
         uses: imranismail/setup-kustomize@v2
 
-      # Remove old frontend pod so the new pod has capacity
-      - name: Remove old frontend pod
+      # Free pod capacity before creating the new frontend
+      - name: Scale frontend down
         run: |
-          kubectl delete pod -l app=frontend --ignore-not-found=true
-
-      # Give Kubernetes time to remove the old pod
-      - name: Wait for old frontend pod removal
-        run: |
-          sleep 10
+          kubectl scale deployment/frontend --replicas=0
+          kubectl wait --for=delete pod -l app=frontend --timeout=120s || true
           kubectl get pods -l app=frontend -o wide || true
 
       - name: Set frontend image
@@ -51,6 +47,11 @@
         working-directory: starter/frontend/k8s
         run: |
           kustomize build | kubectl apply -f -
+
+      # Ensure exactly one frontend replica
+      - name: Scale frontend to one replica
+        run: |
+          kubectl scale deployment/frontend --replicas=1
 
       - name: Show frontend deployment
         run: |
@@ -75,7 +76,7 @@
             echo "===== PODS ====="
             kubectl get pods -l app=frontend -o wide || true
 
-            echo "===== DESCRIBE PODS ====="
+            echo "===== POD DESCRIPTION ====="
             kubectl describe pods -l app=frontend || true
 
             echo "===== EVENTS ====="
