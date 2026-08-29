@@ -1,3 +1,133 @@
+name: Frontend Continuous Deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "starter/frontend/**"
+      - ".github/workflows/frontend-cd.yaml"
+  workflow_dispatch:
+
+env:
+  REACT_APP_MOVIE_API_URL: ${{ secrets.REACT_APP_MOVIE_API_URL }}
+
+jobs:
+
+  # ============================================================
+  # LINT
+  # ============================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: starter/frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup NodeJS
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: starter/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: starter/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+
+  # ============================================================
+  # TEST
+  # ============================================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: starter/frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup NodeJS
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: starter/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: starter/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: CI=true npm test -- --watchAll=false
+
+
+  # ============================================================
+  # BUILD
+  # ============================================================
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    needs:
+      - lint
+      - test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        working-directory: starter/frontend
+        run: |
+          docker build \
+            --build-arg REACT_APP_MOVIE_API_URL="${{ secrets.REACT_APP_MOVIE_API_URL }}" \
+            --tag mp-frontend:${{ github.sha }} .
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password \
+            --region "${{ secrets.AWS_REGION }}" |
+          docker login \
+            --username AWS \
+            --password-stdin "${{ secrets.FRONTEND_ECR_REPO }}"
+
+      - name: Tag image
+        run: |
+          docker tag \
+            mp-frontend:${{ github.sha }} \
+            "${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}"
+
+      - name: Push image to ECR
+        run: |
+          docker push \
+            "${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}"
+
+
+  # ============================================================
+  # DEPLOY
+  # ============================================================
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
@@ -16,7 +146,8 @@
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Verify AWS identity
-        run: aws sts get-caller-identity
+        run: |
+          aws sts get-caller-identity
 
       - name: Configure kubectl
         run: |
@@ -25,130 +156,382 @@
             --region "${{ secrets.AWS_REGION }}"
 
       - name: Verify Kubernetes access
-        run: kubectl get nodes
+        run: |
+          kubectl get nodes
 
       - name: Setup Kustomize
         uses: imranismail/setup-kustomize@v2
 
-      # Free pod capacity before creating the new frontend
+
+      # ========================================================
+      # CHECK CURRENT FRONTEND
+      # ========================================================
+      - name: Check current frontend
+        run: |
+          echo "=============================================="
+          echo "CURRENT FRONTEND DEPLOYMENT"
+          echo "=============================================="
+
+          kubectl get deployment frontend -o wide || true
+
+          echo ""
+          echo "=============================================="
+          echo "CURRENT FRONTEND PODS"
+          echo "=============================================="
+
+          kubectl get pods \
+            -l app=frontend \
+            -o wide || true
+
+          echo ""
+          echo "=============================================="
+          echo "CURRENT FRONTEND SERVICE"
+          echo "=============================================="
+
+          kubectl get service frontend -o wide || true
+
+
+      # ========================================================
+      # FREE POD CAPACITY
+      # ========================================================
       - name: Scale frontend down
         run: |
-          kubectl scale deployment/frontend --replicas=0
-          kubectl wait --for=delete pod -l app=frontend --timeout=120s || true
-          kubectl get pods -l app=frontend -o wide || true
+          echo "=============================================="
+          echo "SCALING FRONTEND DOWN"
+          echo "=============================================="
 
+          kubectl scale deployment/frontend --replicas=0
+
+          echo "Waiting for old frontend pods to terminate..."
+
+          for i in {1..30}; do
+
+            POD_COUNT=$(kubectl get pods \
+              -l app=frontend \
+              --no-headers 2>/dev/null | wc -l)
+
+            echo "Frontend pods remaining: $POD_COUNT"
+
+            if [ "$POD_COUNT" -eq 0 ]; then
+              echo "All old frontend pods removed."
+              break
+            fi
+
+            sleep 5
+          done
+
+          echo ""
+          echo "Final frontend pods:"
+          kubectl get pods \
+            -l app=frontend \
+            -o wide || true
+
+
+      # ========================================================
+      # SET NEW IMAGE
+      # ========================================================
       - name: Set frontend image
         working-directory: starter/frontend/k8s
         run: |
           kustomize edit set image \
             frontend="${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}"
 
+
+      # ========================================================
+      # BUILD KUSTOMIZE
+      # ========================================================
+      - name: Build frontend manifests
+        working-directory: starter/frontend/k8s
+        run: |
+          kustomize build .
+
+
+      # ========================================================
+      # DEPLOY FRONTEND
+      # ========================================================
       - name: Deploy frontend
         working-directory: starter/frontend/k8s
         run: |
-          kustomize build | kubectl apply -f -
+          kustomize build . | kubectl apply -f -
 
-      # Ensure exactly one frontend replica
+
+      # ========================================================
+      # ENSURE ONE REPLICA
+      # ========================================================
       - name: Scale frontend to one replica
         run: |
           kubectl scale deployment/frontend --replicas=1
 
+
+      # ========================================================
+      # SHOW DEPLOYMENT
+      # ========================================================
       - name: Show frontend deployment
         run: |
+          echo "=============================================="
+          echo "FRONTEND DEPLOYMENT"
+          echo "=============================================="
+
           kubectl get deployment frontend -o wide
 
+
+      # ========================================================
+      # SHOW PODS
+      # ========================================================
       - name: Show frontend pods
         run: |
-          kubectl get pods -l app=frontend -o wide
+          echo "=============================================="
+          echo "FRONTEND PODS"
+          echo "=============================================="
 
+          kubectl get pods \
+            -l app=frontend \
+            -o wide
+
+
+      # ========================================================
+      # SHOW SERVICE
+      # ========================================================
       - name: Show frontend service
         run: |
+          echo "=============================================="
+          echo "FRONTEND SERVICE"
+          echo "=============================================="
+
           kubectl get service frontend -o wide
 
+
+      # ========================================================
+      # ROLLOUT
+      # ========================================================
       - name: Wait for frontend rollout
         run: |
-          if ! kubectl rollout status deployment/frontend --timeout=180s; then
-            echo "===== FRONTEND DEPLOYMENT FAILED ====="
+          echo "=============================================="
+          echo "WAITING FOR FRONTEND ROLLOUT"
+          echo "=============================================="
 
+          if ! kubectl rollout status \
+            deployment/frontend \
+            --timeout=180s; then
+
+            echo ""
+            echo "=============================================="
+            echo "FRONTEND DEPLOYMENT FAILED"
+            echo "=============================================="
+
+            echo ""
             echo "===== DEPLOYMENT ====="
-            kubectl get deployment frontend -o wide || true
+            kubectl get deployment frontend \
+              -o wide || true
 
+            echo ""
             echo "===== PODS ====="
-            kubectl get pods -l app=frontend -o wide || true
+            kubectl get pods \
+              -l app=frontend \
+              -o wide || true
 
+            echo ""
             echo "===== POD DESCRIPTION ====="
-            kubectl describe pods -l app=frontend || true
+            kubectl describe pods \
+              -l app=frontend || true
 
+            echo ""
             echo "===== EVENTS ====="
             kubectl get events \
-              --sort-by=.lastTimestamp | tail -50 || true
+              --sort-by=.lastTimestamp |
+              tail -50 || true
 
             exit 1
           fi
 
+          echo ""
+          echo "Frontend rollout completed successfully."
+
+
+      # ========================================================
+      # FRONTEND DIAGNOSTICS
+      # ========================================================
       - name: Frontend diagnostics
         if: always()
         run: |
-          echo "===== FRONTEND DEPLOYMENT ====="
-          kubectl get deployment frontend -o wide || true
 
-          echo "===== FRONTEND PODS ====="
-          kubectl get pods -l app=frontend -o wide || true
+          echo "=============================================="
+          echo "FRONTEND DEPLOYMENT"
+          echo "=============================================="
 
-          echo "===== FRONTEND SERVICE ====="
-          kubectl get service frontend -o wide || true
+          kubectl get deployment frontend \
+            -o wide || true
 
-          echo "===== FRONTEND EVENTS ====="
+
+          echo ""
+          echo "=============================================="
+          echo "FRONTEND PODS"
+          echo "=============================================="
+
+          kubectl get pods \
+            -l app=frontend \
+            -o wide || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "FRONTEND POD STATUS"
+          echo "=============================================="
+
+          kubectl get pods \
+            -l app=frontend \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" : "}{.status.phase}{" : Ready="}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' \
+            || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "FRONTEND SERVICE"
+          echo "=============================================="
+
+          kubectl get service frontend \
+            -o wide || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "FRONTEND ENDPOINTS"
+          echo "=============================================="
+
+          kubectl get endpoints frontend \
+            -o wide || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "FRONTEND ENDPOINT SLICES"
+          echo "=============================================="
+
+          kubectl get endpointslice \
+            -l kubernetes.io/service-name=frontend \
+            -o wide || true
+
+
+          echo ""
+          echo "=============================================="
+          echo "FRONTEND EVENTS"
+          echo "=============================================="
+
           kubectl get events \
-            --sort-by=.lastTimestamp | tail -50 || true
+            --sort-by=.lastTimestamp |
+            tail -50 || true
+
 
           POD=$(kubectl get pods \
             -l app=frontend \
             -o jsonpath='{.items[0].metadata.name}' \
             2>/dev/null || true)
 
+
           if [ -n "$POD" ]; then
-            echo "===== FRONTEND LOGS ====="
+
+            echo ""
+            echo "=============================================="
+            echo "FRONTEND LOGS"
+            echo "=============================================="
+
+            echo "Pod: $POD"
+
             kubectl logs "$POD" \
               --all-containers=true \
               --tail=200 || true
 
-            echo "===== FRONTEND DESCRIPTION ====="
+
+            echo ""
+            echo "=============================================="
+            echo "FRONTEND POD DESCRIPTION"
+            echo "=============================================="
+
             kubectl describe pod "$POD" || true
+
+          else
+
+            echo ""
+            echo "No frontend pod found."
+
           fi
 
+
+      # ========================================================
+      # WAIT FOR LOAD BALANCER
+      # ========================================================
       - name: Wait for frontend LoadBalancer
         run: |
+
+          echo "=============================================="
+          echo "WAITING FOR AWS LOAD BALANCER"
+          echo "=============================================="
+
           ADDRESS=""
 
           for i in {1..30}; do
+
             ADDRESS=$(kubectl get service frontend \
               -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' \
               2>/dev/null || true)
 
             if [ -n "$ADDRESS" ]; then
-              echo "LoadBalancer hostname: $ADDRESS"
+
+              echo ""
+              echo "LoadBalancer hostname:"
+              echo "$ADDRESS"
+
               break
+
             fi
 
-            echo "Waiting for LoadBalancer... $i/30"
+            echo "Waiting for LoadBalancer... attempt $i/30"
+
             sleep 10
+
           done
 
+
           if [ -z "$ADDRESS" ]; then
-            echo "LoadBalancer hostname was not assigned."
-            kubectl get service frontend -o wide
-            kubectl describe service frontend
+
+            echo ""
+            echo "=============================================="
+            echo "LOAD BALANCER NOT AVAILABLE"
+            echo "=============================================="
+
+            kubectl get service frontend \
+              -o wide || true
+
+            echo ""
+            echo "===== SERVICE DESCRIPTION ====="
+
+            kubectl describe service frontend || true
+
             exit 1
+
           fi
 
+
+      # ========================================================
+      # SHOW FRONTEND URL
+      # ========================================================
       - name: Show frontend URL
         run: |
+
           ADDRESS=$(kubectl get service frontend \
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
+          echo ""
           echo "=============================================="
           echo "FRONTEND APPLICATION"
           echo "=============================================="
+
           echo "http://$ADDRESS"
+
+          echo "=============================================="
+
+          echo ""
+          echo "FRONTEND URL:"
+          echo "http://$ADDRESS"
+
           echo "=============================================="
