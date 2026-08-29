@@ -14,6 +14,8 @@ RUN pip install --no-cache-dir \
 
 COPY . /app
 
+ENV PYTHONPATH=/app
+
 EXPOSE 5000
 
 CMD ["uwsgi", "--http", "0.0.0.0:5000", "--master", "--enable-threads", "--module", "__init__:app"]
